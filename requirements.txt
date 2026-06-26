@@ -1,0 +1,18 @@
+# --- AI providers ---
+google-genai>=0.8.0          # Gemini (default brain)
+anthropic>=0.40.0            # Claude (direct API)
+boto3>=1.34.0                # Claude via Amazon Bedrock (provider: "bedrock")
+
+# --- Desktop UI (Spotlight popup + tray) ---
+PySide6>=6.6.0
+
+# --- Windows control / perception ---
+uiautomation>=2.0.20         # Windows accessibility (UI) tree
+pyautogui>=0.9.54            # mouse + keyboard takeover
+mss>=9.0.1                   # fast screenshots
+Pillow>=10.0.0               # image encoding
+pyperclip>=1.8.2             # clipboard
+psutil>=5.9.0                # process list / kill
+keyboard>=0.13.5             # global hotkey
+python-dotenv>=1.0.0         # load API keys from .env
+pywin32>=306                 # window activation helpers

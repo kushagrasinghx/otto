@@ -1,0 +1,13 @@
+# secrets
+.env
+
+# python
+.venv/
+__pycache__/
+*.pyc
+
+# build artifacts (PyInstaller / Inno Setup)
+build/
+dist/
+*.spec
+Output/

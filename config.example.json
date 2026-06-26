@@ -1,0 +1,30 @@
+{
+  "provider": "gemini",
+  "hotkey": "ctrl+space",
+
+  "gemini": {
+    "api_key": "",
+    "model": "gemini-2.5-flash"
+  },
+
+  "claude": {
+    "api_key": "",
+    "model": "claude-opus-4-8"
+  },
+
+  "bedrock": {
+    "region": "us-east-1",
+    "model": "anthropic.claude-opus-4-8",
+    "use_mantle": true,
+    "access_key_id": "",
+    "secret_access_key": "",
+    "session_token": "",
+    "profile": ""
+  },
+
+  "agent": {
+    "max_steps": 40,
+    "include_screenshot": true,
+    "screenshot_max_width": 1280
+  }
+}
