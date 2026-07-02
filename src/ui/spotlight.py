@@ -15,11 +15,12 @@ effects).
 from __future__ import annotations
 
 from PySide6.QtCore import (
-    QEasingCurve, QObject, QPoint, QPointF, QRectF,
+    QEasingCurve, QEvent, QObject, QPoint, QPointF,
     QPropertyAnimation, Qt, QThread, QTimer, Signal,
 )
 from PySide6.QtGui import (
-    QColor, QKeyEvent, QPainter, QPainterPath, QPalette, QPen, QPixmap,
+    QColor, QKeyEvent, QKeySequence, QPainter, QPalette, QPen,
+    QPixmap, QShortcut,
 )
 from PySide6.QtWidgets import (
     QApplication, QFrame,
@@ -27,8 +28,10 @@ from PySide6.QtWidgets import (
 )
 
 from ..agent.base import split_icon
-from ..agent.factory import AgentConfigError, create_agent
-from ..config import update_provider
+from ..agent.factory import create_agent
+from ..config import load_config, update_provider
+from ..resources import app_pixmap
+from ..webconfig import settings_url
 from . import icons, styles
 from .blur import enable_blur, round_corners
 
@@ -39,6 +42,7 @@ KIND_COLOR = {
     "status": QColor(161, 161, 170),
     "result": QColor(34, 197, 94),
     "error": QColor(239, 68, 68),
+    "reply": QColor(228, 228, 231),   # neutral — a chat answer, not a task "done"
 }
 
 
@@ -46,13 +50,18 @@ KIND_COLOR = {
 # Worker thread: runs the agent loop off the UI thread.
 # --------------------------------------------------------------------------
 class AgentWorker(QThread):
-    event = Signal(str, str)       # (kind, text)
-    finished_ok = Signal(str)
+    event = Signal(str, str)         # (kind, text) — intermediate steps
+    finished_ok = Signal(str, str)   # (kind, text) — final: reply/result/status
     failed = Signal(str)
 
-    def __init__(self, agent, instruction: str):
+    def __init__(self, make_agent, instruction: str):
+        # `make_agent` is a zero-arg callable run INSIDE this thread. Agent
+        # construction pulls in the provider SDK (google.genai / anthropic),
+        # whose first import alone can block for a second or two — doing it
+        # here keeps the UI thread free so the status cards appear instantly
+        # when the user presses Enter.
         super().__init__()
-        self.agent = agent
+        self.make_agent = make_agent
         self.instruction = instruction
         self._stop = False
 
@@ -61,12 +70,20 @@ class AgentWorker(QThread):
 
     def run(self):
         try:
-            result = self.agent.run(
+            agent = self.make_agent()
+        except Exception as e:
+            self.failed.emit(str(e))
+            return
+        if self._stop:
+            self.finished_ok.emit("status", "Stopped.")
+            return
+        try:
+            kind, text = agent.run(
                 self.instruction,
                 emit=lambda kind, text: self.event.emit(kind, text),
                 should_stop=lambda: self._stop,
             )
-            self.finished_ok.emit(result or "Done.")
+            self.finished_ok.emit(kind, text)
         except Exception as e:  # pragma: no cover
             self.failed.emit(str(e))
 
@@ -90,13 +107,9 @@ def _search_icon(size: int = 20, color: QColor = QColor(212, 212, 216)) -> QPixm
 
 
 # --------------------------------------------------------------------------
-# One step = one independent floating toast card (solid, self-painted).
+# One step = one independent floating card, frosted to match the Spotlight box.
 # --------------------------------------------------------------------------
 class StepCard(QWidget):
-    RADIUS = 10
-    FILL = QColor(9, 9, 11, 247)        # zinc-950, near-solid (shadcn toast)
-    BORDER = QColor(255, 255, 255, 26)  # ~10% white hairline
-
     def __init__(self, kind: str, text: str, width: int):
         super().__init__()
         self.setWindowFlags(
@@ -104,7 +117,10 @@ class StepCard(QWidget):
             | Qt.WindowTransparentForInput)
         self.setAttribute(Qt.WA_TranslucentBackground)
         self.setAttribute(Qt.WA_ShowWithoutActivating)
+        self.setAttribute(Qt.WA_StyledBackground, True)  # let QSS paint this widget
+        self.setObjectName("stepCard")
         self.setStyleSheet(styles.STEP_QSS)
+        self._w = width
         self.setFixedWidth(width)
         self.setWindowOpacity(0.0)  # entrance fade animates this up to 1
         self._pos_anim: QPropertyAnimation | None = None
@@ -129,37 +145,47 @@ class StepCard(QWidget):
         label = QLabel(display_text)
         label.setObjectName("stepText")
         label.setWordWrap(True)
+        self._label = label
 
-        row.addWidget(badge, 0, Qt.AlignTop)
+        row.addWidget(badge, 0, Qt.AlignVCenter)
         row.addWidget(label, 1, Qt.AlignVCenter)
 
-    def paintEvent(self, e):
-        # One anti-aliased rounded rect: crisp corners with no native-blur
-        # square edge and no QSS/compositor interaction to glitch.
-        p = QPainter(self)
-        p.setRenderHint(QPainter.Antialiasing)
-        # Inset by half the pen width so the 1px border sits fully inside the
-        # window bounds instead of getting clipped flat on the edges.
-        r = QRectF(self.rect()).adjusted(0.5, 0.5, -0.5, -0.5)
-        path = QPainterPath()
-        path.addRoundedRect(r, self.RADIUS, self.RADIUS)
-        p.fillPath(path, self.FILL)
-        p.setPen(QPen(self.BORDER, 1))
-        p.drawPath(path)
+    def apply_blur(self):
+        """Exactly the Spotlight box's frosting: acrylic backdrop + DWM rounded
+        corners (the rounding is what keeps the acrylic from spilling past the
+        rounded QSS fill as a square edge)."""
+        try:
+            hwnd = int(self.winId())
+            ok = enable_blur(hwnd)
+            round_corners(hwnd)
+            self.setProperty("blur", "true" if ok else "false")
+            self.style().unpolish(self)
+            self.style().polish(self)
+        except Exception:
+            pass
 
-    def measure(self) -> int:
-        """Resolve the word-wrapped height for the fixed width, return it.
+    # row margins/badge/spacing (must match the layout above) — used to derive
+    # the exact width the wrapped text gets, so the measured height is correct.
+    _M_L, _M_R, _BADGE, _SPACING = 12, 14, 26, 11
 
-        Must be called *after* the widget has been shown at least once —
-        querying sizeHint()/adjustSize() before the first show can return a
-        stale/under-resolved height (stylesheet metrics + word-wrap
-        heightForWidth aren't fully settled until the widget is polished),
-        which was producing inconsistent gaps between stacked cards.
+    def measure(self, max_height: int | None = None) -> int:
+        """Return the card's height for its fixed width, capped to max_height.
+
+        A word-wrapped QLabel's height depends on the width it wraps at. If we
+        don't pin that width, sizeHint() can under-report the height for a long
+        message — the card then gets bottom-anchored by a too-small height and
+        its real (taller) content spills below the screen edge. Pinning the
+        label to the exact text-column width makes heightForWidth accurate.
         """
+        self.setFixedWidth(self._w)
+        text_col = self._w - (self._M_L + self._M_R + self._BADGE + self._SPACING)
+        self._label.setFixedWidth(text_col)
         self.ensurePolished()
         self.layout().activate()
-        self.adjustSize()
-        return self.sizeHint().height()
+        h = self.sizeHint().height()
+        if max_height is not None and h > max_height:
+            h = max_height  # never let one card be taller than the screen
+        return h
 
 
 # --------------------------------------------------------------------------
@@ -193,7 +219,11 @@ class StatusStack(QObject):
         # widget sometimes returned an under-resolved height, which threw off
         # the next card's stacked position as an inconsistent gap.
         card.show()
-        h = card.measure()
+        card.apply_blur()
+        # Cap a single card to the usable screen height so a huge message
+        # (e.g. a long API error) can never overflow past the top or bottom.
+        avail = QApplication.primaryScreen().availableGeometry().height()
+        h = card.measure(max_height=avail - 2 * self.MARGIN)
         card.resize(self.CARD_W, h)
 
         self.cards.append(card)
@@ -220,6 +250,10 @@ class StatusStack(QObject):
     def finish(self, kind: str, text: str):
         self.append(kind, text)
         self._hide.start(7000)
+
+    def dismiss_later(self, ms: int = 3000):
+        """Fade the panel out soon without adding a final card."""
+        self._hide.start(ms)
 
     # -- internals ----------------------------------------------------------
     def _animate_to(self, card: "StepCard", x: int, y: int):
@@ -305,12 +339,13 @@ class SpotlightWindow(QWidget):
         lay.setContentsMargins(22, 18, 22, 14)
         lay.setSpacing(14)
 
-        # row 1: search icon + input
+        # row 1: app logo + input
         row1 = QHBoxLayout()
         row1.setSpacing(12)
         icon = QLabel()
-        icon.setPixmap(_search_icon(20))
-        icon.setFixedSize(20, 26)
+        logo = app_pixmap(22)               # assets/main_icon.png
+        icon.setPixmap(logo if not logo.isNull() else _search_icon(20))
+        icon.setFixedSize(24, 26)
         icon.setAlignment(Qt.AlignVCenter)
         self.prompt = QLineEdit()
         self.prompt.setObjectName("prompt")
@@ -327,9 +362,9 @@ class SpotlightWindow(QWidget):
         sep.setObjectName("sep")
         sep.setFixedHeight(1)
 
-        # row 2: model-switch hint (left) + key hints (right) — plain text, no icons
+        # row 2: command hint (left) + key hints (right) — plain text, no icons
         row2 = QHBoxLayout()
-        self.model_hint = QLabel("Use /model to switch models")
+        self.model_hint = QLabel("/settings to setup models · /model to switch")
         self.model_hint.setObjectName("hint")
         key_hint = QLabel("Enter to send    Esc to hide")
         key_hint.setObjectName("hint")
@@ -342,6 +377,13 @@ class SpotlightWindow(QWidget):
         lay.addLayout(row2)
 
         self.setStyleSheet(styles.SPOTLIGHT_QSS)
+
+        # Esc hides the box. A window-scoped QShortcut fires no matter which
+        # child has focus — relying on keyPressEvent alone missed it because
+        # the focused QLineEdit consumes the key first.
+        esc = QShortcut(QKeySequence(Qt.Key_Escape), self)
+        esc.setContext(Qt.WindowShortcut)
+        esc.activated.connect(self.hide)
 
     # -- config / agent -----------------------------------------------------
     def reload_config(self, config):
@@ -394,6 +436,15 @@ class SpotlightWindow(QWidget):
         else:
             super().keyPressEvent(e)
 
+    def event(self, e):
+        # Click-away to dismiss: when the box loses window activation (the user
+        # clicked another window/the desktop), hide it — like macOS Spotlight.
+        # The status stack is a separate, non-activating window, so showing it
+        # doesn't deactivate this one.
+        if e.type() == QEvent.Type.WindowDeactivate and self.isVisible():
+            self.hide()
+        return super().event(e)
+
     # -- run ----------------------------------------------------------------
     def submit(self):
         text = self.prompt.text().strip()
@@ -401,31 +452,51 @@ class SpotlightWindow(QWidget):
             return
         if self.worker and self.worker.isRunning():
             return
-        if text.lower().startswith("/model"):
+        cmd = text.lower()
+        if cmd in ("/settings", "/set", "/config"):
+            self._open_settings()
+            return
+        if cmd.startswith("/model"):
             self._handle_model_command(text)
             return
-        try:
-            agent = self._ensure_agent()
-        except AgentConfigError as e:
-            self.stack.start(text)
-            self.stack.finish("error", str(e))
-            self.hide()
-            return
-        except Exception as e:
-            self.stack.start(text)
-            self.stack.finish("error", f"Could not start agent: {e}")
-            self.hide()
-            return
 
+        # Pick up any keys/provider just saved in the settings page without
+        # needing a restart (reload is cheap; it also resets the cached agent).
+        self.reload_config(load_config())
+
+        # Instant feedback first: hide the box and show the prompt card before
+        # any agent/SDK work happens. Building the agent is deferred into the
+        # worker thread (see AgentWorker) — its first run imports the provider
+        # SDK, which used to block right here and made Enter feel stuck.
         self.prompt.clear()
         self.hide()  # get out of the agent's way — it drives the real screen
         self.stack.start(text)
 
-        self.worker = AgentWorker(agent, text)
+        self.worker = AgentWorker(self._ensure_agent, text)
         self.worker.event.connect(self.stack.append)
-        self.worker.finished_ok.connect(lambda r: self.stack.finish("result", r))
+        self.worker.finished_ok.connect(self._on_finished)
         self.worker.failed.connect(lambda e: self.stack.finish("error", e))
         self.worker.start()
+
+    def _on_finished(self, kind: str, text: str):
+        # kind is 'reply' (conversational answer), 'result' (task done via the
+        # done() tool), or 'status' (cancelled). Show whatever text there is;
+        # if there's nothing to say, just let the panel fade out — no filler
+        # "Done." card for a plain reply.
+        if text and text.strip():
+            self.stack.finish(kind, text)
+        else:
+            self.stack.dismiss_later()
+
+    def _open_settings(self):
+        """Open the local settings web UI (API keys) in the default browser."""
+        import webbrowser
+        self.prompt.clear()
+        self.hide()
+        try:
+            webbrowser.open(settings_url())
+        except Exception:
+            pass
 
     def _handle_model_command(self, text: str):
         """Handle `/model`, `/model <provider>`, `/model <provider> <model-id>`."""

@@ -25,13 +25,36 @@ TOOL_ICON = {
     "run_shell": "terminal", "clipboard": "clipboard", "wait": "clock",
     "done": "check",
 }
-KIND_ICON = {"status": "info", "thought": "thought", "result": "check", "error": "warning"}
+KIND_ICON = {"status": "info", "thought": "thought", "result": "check",
+             "error": "warning", "reply": "message"}
 
 # describe_call() embeds the icon key as a hidden prefix using this separator
 # (a NUL byte never appears in human text, unlike "|" which can show up in
 # shell commands) so the UI can split it back out without touching the
 # emit()/Signal plumbing in the agent loops.
 ICON_SEP = "\x00"
+
+# Generic completion phrases a model tends to pass to done() with no real
+# content ("Done", "Task finished."). We suppress a final card that says only
+# this — it's noise, especially after a simple conversational reply.
+_GENERIC_DONE = {
+    "", "done", "done.", "ok", "okay", "finished", "finished.",
+    "task finished", "task finished.", "task complete", "task complete.",
+    "task completed", "task completed.", "completed", "completed.",
+    "task is complete", "task is complete.", "all done", "all done.",
+}
+
+# Tools that are perception/bookkeeping, not a real desktop action — used to
+# decide whether a run was an actual task ("result") or just a chat ("reply").
+_NON_ACTION_TOOLS = {"get_state", "done", "wait"}
+
+
+def is_generic_done(text: str) -> bool:
+    return (text or "").strip().lower() in _GENERIC_DONE
+
+
+def is_real_action(tool_name: str) -> bool:
+    return tool_name not in _NON_ACTION_TOOLS
 
 
 def split_icon(kind: str, text: str) -> tuple[str, str]:

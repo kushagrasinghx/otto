@@ -1,8 +1,14 @@
 """Native Windows frosted-glass (acrylic) blur + rounded corners for a window.
 
-Uses the undocumented SetWindowCompositionAttribute for the backdrop blur and
-DwmSetWindowAttribute for Win11 rounded corners. Both are wrapped in try/except
-so the app still runs (just without blur) on older Windows or if the calls fail.
+Uses SetWindowCompositionAttribute with the acrylic accent policy. This is the
+mechanism that actually works for Qt frameless windows: Qt's
+WA_TranslucentBackground makes the window *layered* (WS_EX_LAYERED), and the
+newer documented DWM "system backdrop" API (DWMWA_SYSTEMBACKDROP_TYPE / Mica /
+DWMSBT_*) silently refuses to render on layered windows — it returns S_OK but
+draws nothing. The older accent-policy acrylic is undocumented but is the one
+that composites correctly behind a layered translucent window, including on
+current Windows 11 builds. Rounded corners still come from the documented DWM
+corner-preference attribute.
 """
 
 from __future__ import annotations
@@ -37,13 +43,16 @@ class WINDOWCOMPOSITIONATTRIBDATA(ctypes.Structure):
     ]
 
 
-def enable_blur(hwnd: int, tint: int = 0xD20B0909, acrylic: bool = True) -> bool:
-    """Frost the window backdrop. `tint` is 0xAABBGGRR (default: true Tailwind
-    zinc-950 #09090b, ~82% opacity — R and G equal, B only +2, so the frost
-    reads as neutral black-zinc instead of the cool/blue cast a higher-blue
-    tint produces)."""
+def enable_blur(hwnd: int, tint: int = 0x8C0B0909, acrylic: bool = True) -> bool:
+    """Frost the window backdrop; returns the API's real BOOL result (it does
+    NOT raise on failure). `tint` is 0xAABBGGRR — default is zinc-950 #09090b
+    at ~55% opacity, low enough that the blurred desktop clearly reads through
+    while the panel still looks dark-neutral."""
     try:
         set_wca = ctypes.windll.user32.SetWindowCompositionAttribute
+        set_wca.argtypes = [wintypes.HWND,
+                            ctypes.POINTER(WINDOWCOMPOSITIONATTRIBDATA)]
+        set_wca.restype = wintypes.BOOL
     except Exception:
         return False
     accent = ACCENT_POLICY()
@@ -57,9 +66,7 @@ def enable_blur(hwnd: int, tint: int = 0xD20B0909, acrylic: bool = True) -> bool
     data.SizeOfData = ctypes.sizeof(accent)
     data.Data = ctypes.pointer(accent)
     try:
-        set_wca.argtypes = [wintypes.HWND, ctypes.POINTER(WINDOWCOMPOSITIONATTRIBDATA)]
-        set_wca(int(hwnd), ctypes.byref(data))
-        return True
+        return bool(set_wca(wintypes.HWND(int(hwnd)), ctypes.byref(data)))
     except Exception:
         return False
 
@@ -68,9 +75,9 @@ def round_corners(hwnd: int, small: bool = False) -> bool:
     """Round the window corners (Windows 11). No-op on older Windows."""
     try:
         pref = ctypes.c_int(DWMWCP_ROUNDSMALL if small else DWMWCP_ROUND)
-        ctypes.windll.dwmapi.DwmSetWindowAttribute(
-            int(hwnd), DWMWA_WINDOW_CORNER_PREFERENCE,
+        res = ctypes.windll.dwmapi.DwmSetWindowAttribute(
+            wintypes.HWND(int(hwnd)), DWMWA_WINDOW_CORNER_PREFERENCE,
             ctypes.byref(pref), ctypes.sizeof(pref))
-        return True
+        return res == 0
     except Exception:
         return False

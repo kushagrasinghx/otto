@@ -1,4 +1,4 @@
-"""Launch Windows Pilot.
+"""Launch Otto.
 
 Usage:
     python run.py

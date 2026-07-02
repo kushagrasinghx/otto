@@ -138,6 +138,13 @@ def _draw_thought(p, s, color):
     p.setBrush(Qt.NoBrush)
 
 
+def _draw_message(p, s, color):
+    p.drawRoundedRect(QRectF(s * 0.15, s * 0.20, s * 0.70, s * 0.46),
+                      s * 0.11, s * 0.11)
+    p.drawLine(QPointF(s * 0.34, s * 0.66), QPointF(s * 0.28, s * 0.82))
+    p.drawLine(QPointF(s * 0.28, s * 0.82), QPointF(s * 0.48, s * 0.66))
+
+
 def _draw_gear(p, s, color):
     p.drawEllipse(QRectF(s * 0.30, s * 0.30, s * 0.40, s * 0.40))
     cx, cy, r = s / 2, s / 2, s * 0.40
@@ -153,7 +160,8 @@ _DRAW = {
     "keyboard": _draw_keyboard, "scroll": _draw_scroll, "launch": _draw_launch,
     "window": _draw_window, "terminal": _draw_terminal, "clipboard": _draw_clipboard,
     "clock": _draw_clock, "check": _draw_check, "warning": _draw_warning,
-    "info": _draw_info, "thought": _draw_thought, "gear": _draw_gear,
+    "info": _draw_info, "thought": _draw_thought, "message": _draw_message,
+    "gear": _draw_gear,
 }
 
 

@@ -16,9 +16,11 @@ SPOTLIGHT_QSS = """
     border-radius: 16px;
 }
 #card[blur="true"] {
-    /* dark zinc-950 frost — neutral black-zinc, not blue-tinted */
-    background-color: rgba(9, 9, 11, 108);
-    border: 1px solid rgba(255, 255, 255, 22);
+    /* Acrylic tint (see blur.py) already supplies the dark frost, so keep
+       this Qt overlay nearly transparent — otherwise it stacks on top and
+       hides the blurred desktop. */
+    background-color: rgba(9, 9, 11, 30);
+    border: 1px solid rgba(255, 255, 255, 26);
 }
 #prompt {
     background: transparent;
@@ -43,10 +45,20 @@ SPOTLIGHT_QSS = """
 }
 """
 
-# --- Step cards (toast-style, bottom-right) ---------------------------------
-# The card surface itself (fill + border + rounded corners) is painted
-# manually in StepCard.paintEvent — QSS here only styles the children.
+# --- Step cards (bottom-right) ----------------------------------------------
+# #stepCard uses the EXACT same surface values as the Spotlight box's #card
+# above (same fill alpha, border, radius, and blur-property overlay) so the
+# frosted acrylic reads identically on both.
 STEP_QSS = """
+#stepCard {
+    background-color: rgba(9, 9, 11, 210);
+    border: 1px solid rgba(255, 255, 255, 18);
+    border-radius: 16px;
+}
+#stepCard[blur="true"] {
+    background-color: rgba(9, 9, 11, 30);
+    border: 1px solid rgba(255, 255, 255, 26);
+}
 #stepText {
     color: #e4e4e7;
     font-size: 13px;
@@ -59,4 +71,5 @@ STEP_QSS = """
 #iconBadge[kind="status"]  { background-color: rgba(161, 161, 170, 22); }
 #iconBadge[kind="result"]  { background-color: rgba(34, 197, 94, 36); }
 #iconBadge[kind="error"]   { background-color: rgba(239, 68, 68, 36); }
+#iconBadge[kind="reply"]   { background-color: rgba(228, 228, 231, 22); }
 """

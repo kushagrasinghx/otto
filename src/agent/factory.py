@@ -22,7 +22,7 @@ def create_agent(config: Config):
         key = config.api_key("gemini")
         if not key:
             raise AgentConfigError(
-                "No Gemini API key. Add it to config.json or set GOOGLE_API_KEY "
+                "No Gemini API key. Run /settings to configure"
                 "/ GEMINI_API_KEY (or your .env).")
         from .gemini_agent import GeminiAgent
         return GeminiAgent(key, config.model("gemini"), agent_cfg)
@@ -31,7 +31,7 @@ def create_agent(config: Config):
         key = config.api_key("claude")
         if not key:
             raise AgentConfigError(
-                "No Claude API key. Add it to config.json or set "
+                "No Claude API key. Run /settings to configure"
                 "ANTHROPIC_API_KEY (or your .env).")
         import anthropic
         from .claude_agent import ClaudeAgent
@@ -40,4 +40,4 @@ def create_agent(config: Config):
 
     raise AgentConfigError(
         f"Unknown provider '{provider}'. Use 'gemini' or 'claude' "
-        f"(set via config.json's 'provider' or the WINDOWS_PILOT_PROVIDER env var).")
+        f"(set via config.json's 'provider' or the OTTO_PROVIDER env var).")

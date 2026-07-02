@@ -1,4 +1,4 @@
-# Windows Pilot 🖱️⌨️
+# Otto 🖱️⌨️
 
 A Spotlight-style command box for Windows. Press a hotkey, type what you want in
 plain English, and an AI agent **takes over your mouse, keyboard, and shell** to
@@ -39,32 +39,31 @@ environment variable) and pick the provider. Default is Gemini.
 > Windows 10/11 + Python 3.11+ recommended.
 
 ```powershell
-cd D:\Projects\windows-ai-agent
+cd otto
 python -m venv .venv
 .\.venv\Scripts\Activate.ps1
 pip install -r requirements.txt
 ```
 
-### Add your API key
+### Add your API key (settings page)
 
-The first run creates a config file at
-`%APPDATA%\WindowsAIAgent\config.json`. Open it (tray icon → *Open config
-file…*) and paste your key:
+The app runs a tiny **local settings page** at **http://127.0.0.1:9999** for
+managing your keys — no file editing required. Open it any of these ways:
 
-```json
-{
-  "provider": "gemini",
-  "hotkey": "ctrl+space",
-  "gemini": { "api_key": "YOUR_GEMINI_KEY", "model": "gemini-2.5-flash" },
-  "claude": { "api_key": "YOUR_CLAUDE_KEY", "model": "claude-opus-4-8" }
-}
-```
+- Press the hotkey and type **`/settings`** in the command box, or
+- Tray icon → **Settings (API keys)…**, or
+- Just browse to http://127.0.0.1:9999
+
+On first run with no key configured, it opens automatically. Paste your key,
+pick the provider, and click **Save** — changes apply on your next command (no
+restart needed, except for a hotkey change).
 
 - **Gemini key:** https://aistudio.google.com/apikey
 - **Claude key:** https://console.anthropic.com/
-- To use Claude instead, set `"provider": "claude"`.
-- Keys can also come from environment variables: `GOOGLE_API_KEY` /
-  `GEMINI_API_KEY` or `ANTHROPIC_API_KEY`.
+
+Everything is stored in `%APPDATA%\Otto\config.json` (tray → *Open config file…*
+to edit by hand). Keys can also be supplied via environment variables
+`GOOGLE_API_KEY` / `GEMINI_API_KEY` or `ANTHROPIC_API_KEY`.
 
 ### Run
 
@@ -107,6 +106,7 @@ run.py                     # entry point
 src/
   main.py                  # tray icon, global hotkey, DPI awareness
   config.py                # config load/save
+  webconfig.py             # local settings web UI (127.0.0.1:9999) for API keys
   ui/spotlight.py          # the Spotlight box, status toast, worker thread
   agent/
     factory.py             # builds Gemini or Claude agent from config
@@ -129,9 +129,3 @@ src/
 - Everything runs locally except the LLM calls (your prompt + screenshots go to
   Gemini/Claude). Don't point it at sensitive screens you don't want sent to the
   provider.
-
-## Packaging (later)
-
-Once you're happy with it, we can bundle it into a one-file installer with
-PyInstaller (`pyinstaller --noconsole --onefile run.py`) plus an Inno Setup
-script for a proper `Setup.exe`. Not done yet — test first.

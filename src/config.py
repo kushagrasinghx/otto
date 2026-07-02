@@ -1,9 +1,9 @@
 """Configuration loading/saving.
 
-Config lives at %APPDATA%/WindowsAIAgent/config.json. On first run we copy the
-bundled defaults there. Everything can also be driven purely from environment
-variables (typically via the project's .env), with no config.json edits:
-  - WINDOWS_PILOT_PROVIDER  overrides which provider runs (gemini/claude)
+Config lives at %APPDATA%/Otto/config.json. On first run we copy the bundled
+defaults there. Everything can also be driven purely from environment variables
+(typically via the project's .env), with no config.json edits:
+  - OTTO_PROVIDER           overrides which provider runs (gemini/claude)
   - GEMINI_API_KEY / GOOGLE_API_KEY, ANTHROPIC_API_KEY     -> API keys
   - GEMINI_MODEL, CLAUDE_MODEL (alias ANTHROPIC_MODEL)     -> model id
 Real OS environment variables always take precedence over .env, and .env takes
@@ -41,8 +41,17 @@ DEFAULTS = {
 
 def config_dir() -> Path:
     base = os.environ.get("APPDATA") or str(Path.home())
-    d = Path(base) / "WindowsAIAgent"
+    d = Path(base) / "Otto"
     d.mkdir(parents=True, exist_ok=True)
+    # One-time migration from the previous "WindowsAIAgent" folder so an
+    # existing user's saved API key carries over to the renamed app.
+    legacy = Path(base) / "WindowsAIAgent" / "config.json"
+    new_cfg = d / "config.json"
+    if legacy.exists() and not new_cfg.exists():
+        try:
+            new_cfg.write_text(legacy.read_text(encoding="utf-8"), encoding="utf-8")
+        except Exception:
+            pass
     return d
 
 
@@ -60,6 +69,18 @@ def _deep_merge(base: dict, override: dict) -> dict:
     return out
 
 
+def write_config(data: dict) -> None:
+    """Persist config atomically to %APPDATA%/Otto/config.json.
+
+    Writes to a temp file in the same directory then os.replace()s it into
+    place — an atomic rename on Windows — so a crash mid-write can never leave
+    a truncated/corrupt file that would lose the user's saved API key."""
+    path = config_path()
+    tmp = path.with_name(path.name + ".tmp")
+    tmp.write_text(json.dumps(data, indent=2), encoding="utf-8")
+    os.replace(tmp, path)
+
+
 class Config:
     def __init__(self, data: dict):
         self.data = data
@@ -67,7 +88,7 @@ class Config:
     # convenience accessors -------------------------------------------------
     @property
     def provider(self) -> str:
-        env_provider = (os.environ.get("WINDOWS_PILOT_PROVIDER") or "").strip().lower()
+        env_provider = (os.environ.get("OTTO_PROVIDER") or "").strip().lower()
         if env_provider:
             return env_provider
         return self.data.get("provider", "gemini").lower()
@@ -128,7 +149,7 @@ def update_provider(provider: str, model: str | None = None) -> "Config":
     merged["provider"] = provider
     if model:
         merged.setdefault(provider, {})["model"] = model
-    path.write_text(json.dumps(merged, indent=2), encoding="utf-8")
+    write_config(merged)
     return Config(merged)
 
 
