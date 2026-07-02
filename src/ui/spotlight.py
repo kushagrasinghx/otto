@@ -34,6 +34,7 @@ from ..resources import app_pixmap
 from ..webconfig import settings_url
 from . import icons, styles
 from .blur import enable_blur, round_corners
+from .winfocus import force_foreground
 
 # Icon + accent color per step kind (action/thought/status/result/error).
 KIND_COLOR = {
@@ -404,10 +405,22 @@ class SpotlightWindow(QWidget):
         self.move(x, y)
         self.show()
         self.raise_()
+        self._apply_blur()
+        self._take_focus()
+        # Re-assert once the event loop has processed the show — the first grab
+        # can land before the window is fully mapped/active, in which case Qt
+        # silently keeps focus on the previously-active app.
+        QTimer.singleShot(60, self._take_focus)
+
+    def _take_focus(self):
+        # Steal foreground focus from the app that had it when the hotkey fired,
+        # otherwise typing goes to that app and Esc/click-away don't work.
+        if not self.isVisible():
+            return
+        force_foreground(int(self.winId()))
         self.activateWindow()
         self.prompt.setFocus()
         self.prompt.selectAll()
-        self._apply_blur()
 
     def _apply_blur(self):
         try:
