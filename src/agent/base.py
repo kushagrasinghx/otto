@@ -56,8 +56,7 @@ def describe_call(name: str, args: dict) -> str:
     elif name == "drag":
         text = "Drag"
     elif name == "type_text":
-        t = str(args.get("text", ""))
-        text = f"Type “{t[:40]}{'…' if len(t) > 40 else ''}”"
+        text = f"Type “{args.get('text', '')}”"
     elif name == "press_keys":
         text = f"Press {args.get('keys')}"
     elif name == "scroll":
@@ -67,8 +66,7 @@ def describe_call(name: str, args: dict) -> str:
     elif name == "switch_app":
         text = f"Switch to {args.get('name')}"
     elif name == "run_shell":
-        c = str(args.get("command", ""))
-        text = f"Shell: {c[:50]}{'…' if len(c) > 50 else ''}"
+        text = f"Shell: {args.get('command', '')}"
     elif name == "clipboard":
         text = f"Clipboard {args.get('mode')}"
     elif name == "wait":

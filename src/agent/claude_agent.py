@@ -12,9 +12,6 @@ from .system_prompt import SYSTEM_PROMPT
 
 class ClaudeAgent:
     def __init__(self, client, model: str, agent_cfg: dict):
-        # `client` is any Anthropic Messages-API client: anthropic.Anthropic,
-        # AnthropicBedrockMantle, or AnthropicBedrock. They share the same
-        # messages.create surface, so the loop below is provider-agnostic.
         self.client = client
         self.model = model or "claude-opus-4-8"
         self.cfg = agent_cfg or {}
@@ -41,8 +38,10 @@ class ClaudeAgent:
                     messages=messages,
                 )
             except Exception as e:
-                emit("error", f"Claude API error: {e}")
-                return f"Claude API error: {e}"
+                # Raise rather than emit+return: AgentWorker's except-clause
+                # turns this into the single failure card (red), avoiding a
+                # duplicate "result" card from finished_ok.
+                raise RuntimeError(f"Claude API error: {e}") from e
 
             messages.append({"role": "assistant", "content": response.content})
 
@@ -69,8 +68,7 @@ class ClaudeAgent:
                 result = execute_tool(self.controller, tu.name, args, include_shot)
 
                 if result.is_done:
-                    emit("result", result.text)
-                    return result.text
+                    return result.text  # AgentWorker.finished_ok shows this once
 
                 content = [{"type": "text", "text": result.text}]
                 if result.screenshot:
@@ -90,5 +88,4 @@ class ClaudeAgent:
 
             messages.append({"role": "user", "content": tool_results})
 
-        emit("error", "Reached the step limit before finishing.")
-        return "Reached the maximum number of steps before completing the task."
+        raise RuntimeError("Reached the maximum number of steps before completing the task.")

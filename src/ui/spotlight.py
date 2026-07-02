@@ -1,23 +1,45 @@
-"""Spotlight prompt box (frosted), animated step cards, and the agent worker."""
+"""Spotlight prompt box (frosted) and toast-style step cards (bottom-right).
+
+The prompt box keeps the native acrylic frost. The step cards deliberately do
+NOT: native blur always fills a window's rectangular bounds, so on a small
+rounded chip the square blur edge pokes out past the corners (region masks
+can clip it but aren't anti-aliased — chunky corners either way). Instead each
+card is a solid shadcn-toast-style surface painted manually in paintEvent with
+one anti-aliased rounded rect. Entrance fade uses the native windowOpacity
+property rather than QGraphicsOpacityEffect — the effect rasterizes the whole
+translucent window through an offscreen buffer, which is a known source of
+paint glitches (and the QPainter warning spam we hit earlier with nested
+effects).
+"""
 
 from __future__ import annotations
 
 from PySide6.QtCore import (
-    QEasingCurve, QParallelAnimationGroup, QPoint, QPointF, QPropertyAnimation,
-    Qt, QThread, QTimer, Signal,
+    QEasingCurve, QObject, QPoint, QPointF, QRectF,
+    QPropertyAnimation, Qt, QThread, QTimer, Signal,
 )
 from PySide6.QtGui import (
-    QColor, QKeyEvent, QPainter, QPalette, QPen, QPixmap,
+    QColor, QKeyEvent, QPainter, QPainterPath, QPalette, QPen, QPixmap,
 )
 from PySide6.QtWidgets import (
-    QApplication, QFrame, QGraphicsOpacityEffect,
+    QApplication, QFrame,
     QHBoxLayout, QLabel, QLineEdit, QVBoxLayout, QWidget,
 )
 
+from ..agent.base import split_icon
 from ..agent.factory import AgentConfigError, create_agent
 from ..config import update_provider
-from . import styles
+from . import icons, styles
 from .blur import enable_blur, round_corners
+
+# Icon + accent color per step kind (action/thought/status/result/error).
+KIND_COLOR = {
+    "action": QColor(59, 130, 246),
+    "thought": QColor(212, 212, 216),
+    "status": QColor(161, 161, 170),
+    "result": QColor(34, 197, 94),
+    "error": QColor(239, 68, 68),
+}
 
 
 # --------------------------------------------------------------------------
@@ -68,164 +90,201 @@ def _search_icon(size: int = 20, color: QColor = QColor(212, 212, 216)) -> QPixm
 
 
 # --------------------------------------------------------------------------
-# One step = one card. Fades in + slides up via a height-grow animation.
+# One step = one independent floating toast card (solid, self-painted).
 # --------------------------------------------------------------------------
 class StepCard(QWidget):
+    RADIUS = 10
+    FILL = QColor(9, 9, 11, 247)        # zinc-950, near-solid (shadcn toast)
+    BORDER = QColor(255, 255, 255, 26)  # ~10% white hairline
+
     def __init__(self, kind: str, text: str, width: int):
-        super().__init__()
-        self._w = width
-        self._target = 0
-
-        # A single graphics effect per widget — nesting an opacity effect over a
-        # child with its own drop-shadow effect makes Qt spam "QPainter::begin:
-        # A paint device can only be painted by one painter at a time".
-        self.opacity = QGraphicsOpacityEffect(self)
-        self.opacity.setOpacity(0.0)
-        self.setGraphicsEffect(self.opacity)
-
-        outer = QVBoxLayout(self)
-        outer.setContentsMargins(8, 4, 8, 8)  # gap between cards
-        outer.setSpacing(0)
-
-        inner = QFrame()
-        inner.setObjectName("stepCard")
-
-        row = QHBoxLayout(inner)
-        row.setContentsMargins(14, 12, 14, 12)
-        row.setSpacing(12)
-
-        dot = QFrame()
-        dot.setObjectName("dot")
-        dot.setProperty("kind", kind)
-        dot.setFixedSize(8, 8)
-
-        label = QLabel(text if len(text) <= 240 else text[:240] + "…")
-        label.setObjectName("stepText")
-        label.setWordWrap(True)
-
-        row.addWidget(dot, 0, Qt.AlignTop)
-        dot.setContentsMargins(0, 4, 0, 0)
-        row.addWidget(label, 1)
-        outer.addWidget(inner)
-
-    def measure(self) -> int:
-        self.setFixedWidth(self._w)
-        self.layout().activate()
-        self.adjustSize()
-        self._target = self.sizeHint().height()
-        self.setMaximumHeight(0)
-        return self._target
-
-
-# --------------------------------------------------------------------------
-# Status stack: bottom-right, click-through, grows upward as steps arrive.
-# --------------------------------------------------------------------------
-class StatusStack(QWidget):
-    MAX = 6
-    MARGIN = 20
-    CARD_W = 372
-    WIN_W = CARD_W + 16  # + vbox left/right margins
-
-    def __init__(self):
         super().__init__()
         self.setWindowFlags(
             Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint | Qt.Tool
             | Qt.WindowTransparentForInput)
         self.setAttribute(Qt.WA_TranslucentBackground)
         self.setAttribute(Qt.WA_ShowWithoutActivating)
-
-        self.vbox = QVBoxLayout(self)
-        self.vbox.setContentsMargins(8, 8, 8, 8)
-        self.vbox.setSpacing(0)
         self.setStyleSheet(styles.STEP_QSS)
+        self.setFixedWidth(width)
+        self.setWindowOpacity(0.0)  # entrance fade animates this up to 1
+        self._pos_anim: QPropertyAnimation | None = None
 
-        self._anims: list[QParallelAnimationGroup] = []
+        icon_key, display_text = split_icon(kind, text)
+        accent = KIND_COLOR.get(kind, QColor(161, 161, 170))
+
+        row = QHBoxLayout(self)
+        row.setContentsMargins(12, 12, 14, 12)
+        row.setSpacing(11)
+
+        badge = QFrame()
+        badge.setObjectName("iconBadge")
+        badge.setProperty("kind", kind)
+        badge.setFixedSize(26, 26)
+        badge_lay = QHBoxLayout(badge)
+        badge_lay.setContentsMargins(0, 0, 0, 0)
+        icon_label = QLabel()
+        icon_label.setPixmap(icons.icon(icon_key, 15, accent))
+        badge_lay.addWidget(icon_label, 0, Qt.AlignCenter)
+
+        label = QLabel(display_text)
+        label.setObjectName("stepText")
+        label.setWordWrap(True)
+
+        row.addWidget(badge, 0, Qt.AlignTop)
+        row.addWidget(label, 1, Qt.AlignVCenter)
+
+    def paintEvent(self, e):
+        # One anti-aliased rounded rect: crisp corners with no native-blur
+        # square edge and no QSS/compositor interaction to glitch.
+        p = QPainter(self)
+        p.setRenderHint(QPainter.Antialiasing)
+        # Inset by half the pen width so the 1px border sits fully inside the
+        # window bounds instead of getting clipped flat on the edges.
+        r = QRectF(self.rect()).adjusted(0.5, 0.5, -0.5, -0.5)
+        path = QPainterPath()
+        path.addRoundedRect(r, self.RADIUS, self.RADIUS)
+        p.fillPath(path, self.FILL)
+        p.setPen(QPen(self.BORDER, 1))
+        p.drawPath(path)
+
+    def measure(self) -> int:
+        """Resolve the word-wrapped height for the fixed width, return it.
+
+        Must be called *after* the widget has been shown at least once —
+        querying sizeHint()/adjustSize() before the first show can return a
+        stale/under-resolved height (stylesheet metrics + word-wrap
+        heightForWidth aren't fully settled until the widget is polished),
+        which was producing inconsistent gaps between stacked cards.
+        """
+        self.ensurePolished()
+        self.layout().activate()
+        self.adjustSize()
+        return self.sizeHint().height()
+
+
+# --------------------------------------------------------------------------
+# Step manager: positions independent StepCard windows bottom-right, stacked
+# bottom-up with a gap between them. Not a window itself — just bookkeeping.
+# --------------------------------------------------------------------------
+class StatusStack(QObject):
+    MAX = 6
+    MARGIN = 20
+    GAP = 8
+    CARD_W = 372
+
+    def __init__(self):
+        super().__init__()
+        self.cards: list[StepCard] = []
         self._hide = QTimer(self)
         self._hide.setSingleShot(True)
-        self._hide.timeout.connect(self.hide)
+        self._hide.timeout.connect(self._hide_all)
 
     # -- public API ---------------------------------------------------------
     def start(self, prompt: str):
         self._hide.stop()
         self._clear()
-        self.show()
         self.append("status", f"“{prompt}”")
 
     def append(self, kind: str, text: str):
         card = StepCard(kind, text, self.CARD_W)
-        self.vbox.addWidget(card)
-        target = card.measure()
+        # Show it first (still invisible: windowOpacity is 0 until the fade
+        # starts) so Qt fully resolves stylesheet metrics and word-wrap
+        # heightForWidth before we measure — measuring an unshown top-level
+        # widget sometimes returned an under-resolved height, which threw off
+        # the next card's stacked position as an inconsistent gap.
+        card.show()
+        h = card.measure()
+        card.resize(self.CARD_W, h)
 
-        grow = QPropertyAnimation(card, b"maximumHeight", self)
-        grow.setStartValue(0)
-        grow.setEndValue(target)
-        grow.setDuration(300)
-        grow.setEasingCurve(QEasingCurve.OutCubic)
-        grow.valueChanged.connect(lambda _: self._reposition())
+        self.cards.append(card)
+        self._trim()
 
-        fade = QPropertyAnimation(card.opacity, b"opacity", self)
+        targets = self._compute_targets()
+        new_x, new_y = targets[card]
+        card.move(new_x, new_y + 12)  # entrance offset, slides up into place
+
+        # Native window opacity: composited by the window manager, no
+        # QGraphicsOpacityEffect offscreen-buffer glitches. Never re-targeted
+        # after start, so DeleteWhenStopped is safe here (no stored reference).
+        fade = QPropertyAnimation(card, b"windowOpacity", self)
         fade.setStartValue(0.0)
         fade.setEndValue(1.0)
-        fade.setDuration(340)
+        fade.setDuration(220)
         fade.setEasingCurve(QEasingCurve.OutCubic)
+        fade.start(QPropertyAnimation.DeletionPolicy.DeleteWhenStopped)
 
-        group = QParallelAnimationGroup(self)
-        group.addAnimation(grow)
-        group.addAnimation(fade)
-        group.finished.connect(lambda: self._on_anim_done(group))
-        self._anims.append(group)
-        group.start()
-
-        self._trim()
-        self.show()
-        self.raise_()
-        self._reposition()
+        for c, (tx, ty) in targets.items():
+            self._animate_to(c, tx, ty)
+            c.raise_()
 
     def finish(self, kind: str, text: str):
         self.append(kind, text)
         self._hide.start(7000)
 
     # -- internals ----------------------------------------------------------
-    def _on_anim_done(self, group):
-        if group in self._anims:
-            self._anims.remove(group)
-        self._reposition()
+    def _animate_to(self, card: "StepCard", x: int, y: int):
+        """Animate `card` to (x, y), replacing any animation already in
+        flight for it. Every append() re-targets ALL cards (older ones may
+        need to shift up to make room for the new one); without stopping a
+        still-running previous animation first, the old one keeps overwriting
+        `pos` on each tick and fights this new target — the card would settle
+        at an unpredictable spot, which showed up as inconsistent gaps."""
+        if card._pos_anim is not None:
+            # DeletionPolicy.DeleteWhenStopped would auto-delete the C++
+            # object once it finishes naturally — leaving card._pos_anim a
+            # dangling reference that crashes the next .stop() call here. Keep
+            # the object alive (default policy) and clean it up ourselves.
+            card._pos_anim.stop()
+            card._pos_anim.deleteLater()
+        anim = QPropertyAnimation(card, b"pos", self)
+        anim.setStartValue(card.pos())
+        anim.setEndValue(QPoint(x, y))
+        anim.setDuration(220)
+        anim.setEasingCurve(QEasingCurve.OutCubic)
+        card._pos_anim = anim
+        anim.start()
 
-    def _clear(self):
-        self._anims.clear()
-        while self.vbox.count():
-            item = self.vbox.takeAt(0)
-            w = item.widget()
-            if w:
-                w.deleteLater()
+    def _compute_targets(self) -> dict:
+        g = QApplication.primaryScreen().availableGeometry()
+        x = g.right() - self.CARD_W - self.MARGIN
+        y = g.bottom() - self.MARGIN
+        targets = {}
+        for card in reversed(self.cards):  # newest at the bottom
+            y -= card.height()
+            targets[card] = (x, y)
+            y -= self.GAP
+        return targets
 
     def _trim(self):
-        while self.vbox.count() > self.MAX:
-            item = self.vbox.takeAt(0)
-            w = item.widget()
-            if w:
-                w.deleteLater()
+        while len(self.cards) > self.MAX:
+            old = self.cards.pop(0)
+            if old._pos_anim is not None:
+                old._pos_anim.stop()
+            old.close()
+            old.deleteLater()
 
-    def _content_height(self) -> int:
-        m = self.vbox.contentsMargins()
-        h = m.top() + m.bottom()
-        for i in range(self.vbox.count()):
-            w = self.vbox.itemAt(i).widget()
-            if not w:
-                continue
-            h += min(w.maximumHeight(), w.sizeHint().height())
-        return max(h, 1)
+    def _clear(self):
+        for c in self.cards:
+            if c._pos_anim is not None:
+                c._pos_anim.stop()
+            c.close()
+            c.deleteLater()
+        self.cards.clear()
 
-    def _reposition(self):
-        h = self._content_height()
-        self.resize(self.WIN_W, h)
-        g = QApplication.primaryScreen().availableGeometry()
-        self.move(g.right() - self.WIN_W - self.MARGIN,
-                  g.bottom() - h - self.MARGIN)
+    def _hide_all(self):
+        for c in self.cards:
+            fade = QPropertyAnimation(c, b"windowOpacity", self)
+            fade.setStartValue(c.windowOpacity())
+            fade.setEndValue(0.0)
+            fade.setDuration(280)
+            fade.setEasingCurve(QEasingCurve.InCubic)
+            fade.finished.connect(c.hide)
+            fade.start(QPropertyAnimation.DeletionPolicy.DeleteWhenStopped)
 
 
 # --------------------------------------------------------------------------
-# Spotlight prompt window (frosted / acrylic).
+# Spotlight prompt window — the window IS the card (one container, blurred
+# and masked to its own rounded shape).
 # --------------------------------------------------------------------------
 class SpotlightWindow(QWidget):
     def __init__(self, config):
@@ -234,21 +293,15 @@ class SpotlightWindow(QWidget):
         self._agent = None
         self.worker: AgentWorker | None = None
         self.stack = StatusStack()
-        self._blur_ready = False
 
         self.setWindowFlags(
             Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint | Qt.Tool)
         self.setAttribute(Qt.WA_TranslucentBackground)
+        self.setAttribute(Qt.WA_StyledBackground, True)  # let QSS paint *this* widget
+        self.setObjectName("card")
         self.setFixedWidth(600)
 
-        outer = QVBoxLayout(self)
-        outer.setContentsMargins(0, 0, 0, 0)
-
-        self.card = QFrame()
-        self.card.setObjectName("card")
-        outer.addWidget(self.card)
-
-        lay = QVBoxLayout(self.card)
+        lay = QVBoxLayout(self)
         lay.setContentsMargins(22, 18, 22, 14)
         lay.setSpacing(14)
 
@@ -319,9 +372,9 @@ class SpotlightWindow(QWidget):
             hwnd = int(self.winId())
             ok = enable_blur(hwnd)
             round_corners(hwnd)
-            self.card.setProperty("blur", "true" if ok else "false")
-            self.card.style().unpolish(self.card)
-            self.card.style().polish(self.card)
+            self.setProperty("blur", "true" if ok else "false")
+            self.style().unpolish(self)
+            self.style().polish(self)
         except Exception:
             pass
 
@@ -383,7 +436,7 @@ class SpotlightWindow(QWidget):
             self.stack.finish(
                 "status",
                 f"Current: {self.config.provider} · {self.config.model() or '—'}. "
-                f"Try /model gemini, /model claude, or /model bedrock.")
+                f"Try /model gemini or /model claude.")
             return
         provider = args[0].lower()
         model = args[1] if len(args) > 1 else None

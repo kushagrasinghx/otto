@@ -1,9 +1,13 @@
 """Configuration loading/saving.
 
 Config lives at %APPDATA%/WindowsAIAgent/config.json. On first run we copy the
-bundled defaults there. API keys can also be supplied via environment variables
-(GOOGLE_API_KEY / GEMINI_API_KEY for Gemini, ANTHROPIC_API_KEY for Claude),
-which take precedence over an empty value in the file.
+bundled defaults there. Everything can also be driven purely from environment
+variables (typically via the project's .env), with no config.json edits:
+  - WINDOWS_PILOT_PROVIDER  overrides which provider runs (gemini/claude)
+  - GEMINI_API_KEY / GOOGLE_API_KEY, ANTHROPIC_API_KEY     -> API keys
+  - GEMINI_MODEL, CLAUDE_MODEL (alias ANTHROPIC_MODEL)     -> model id
+Real OS environment variables always take precedence over .env, and .env takes
+precedence over an empty value in config.json.
 """
 
 from __future__ import annotations
@@ -27,15 +31,6 @@ DEFAULTS = {
     "hotkey": "ctrl+space",
     "gemini": {"api_key": "", "model": "gemini-2.5-flash"},
     "claude": {"api_key": "", "model": "claude-opus-4-8"},
-    "bedrock": {
-        "region": "us-east-1",
-        "model": "anthropic.claude-opus-4-8",
-        "use_mantle": True,
-        "access_key_id": "",
-        "secret_access_key": "",
-        "session_token": "",
-        "profile": "",
-    },
     "agent": {
         "max_steps": 40,
         "include_screenshot": True,
@@ -72,6 +67,9 @@ class Config:
     # convenience accessors -------------------------------------------------
     @property
     def provider(self) -> str:
+        env_provider = (os.environ.get("WINDOWS_PILOT_PROVIDER") or "").strip().lower()
+        if env_provider:
+            return env_provider
         return self.data.get("provider", "gemini").lower()
 
     @property
@@ -100,10 +98,18 @@ class Config:
         return ""
 
     def model(self, provider: str | None = None) -> str:
+        provider = (provider or self.provider).lower()
+        env_var = {"gemini": "GEMINI_MODEL", "claude": "CLAUDE_MODEL"}.get(provider)
+        if env_var:
+            val = (os.environ.get(env_var) or "").strip()
+            if not val and provider == "claude":
+                val = (os.environ.get("ANTHROPIC_MODEL") or "").strip()
+            if val:
+                return val
         return self.provider_block(provider).get("model", "")
 
 
-VALID_PROVIDERS = ("gemini", "claude", "bedrock")
+VALID_PROVIDERS = ("gemini", "claude")
 
 
 def update_provider(provider: str, model: str | None = None) -> "Config":

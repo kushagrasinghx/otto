@@ -12,16 +12,6 @@
     "model": "claude-opus-4-8"
   },
 
-  "bedrock": {
-    "region": "us-east-1",
-    "model": "anthropic.claude-opus-4-8",
-    "use_mantle": true,
-    "access_key_id": "",
-    "secret_access_key": "",
-    "session_token": "",
-    "profile": ""
-  },
-
   "agent": {
     "max_steps": 40,
     "include_screenshot": true,

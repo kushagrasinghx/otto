@@ -41,13 +41,15 @@ class GeminiAgent:
                 response = self.client.models.generate_content(
                     model=self.model, contents=contents, config=gen_config)
             except Exception as e:
-                emit("error", f"Gemini API error: {e}")
-                return f"Gemini API error: {e}"
+                # Raise rather than emit+return: AgentWorker's except-clause
+                # turns this into the single failure card (red). Emitting here
+                # too would show the same message twice — once as an "error"
+                # step and again as a "result" step via finished_ok.
+                raise RuntimeError(f"Gemini API error: {e}") from e
 
             candidate = (response.candidates or [None])[0]
             if candidate is None or candidate.content is None:
-                emit("error", "Empty response from Gemini.")
-                return "Empty response from model."
+                raise RuntimeError("Empty response from Gemini.")
 
             parts = candidate.content.parts or []
             contents.append(candidate.content)
@@ -65,7 +67,7 @@ class GeminiAgent:
                         text="Continue. Take the next action with a tool, or call "
                              "done if the task is complete.")]))
                     continue
-                return "Model produced no action."
+                raise RuntimeError("Model produced no action.")
 
             # Execute each requested call; build a single response Content.
             response_parts = []
@@ -79,8 +81,7 @@ class GeminiAgent:
                 result = execute_tool(self.controller, name, args, include_shot)
 
                 if result.is_done:
-                    emit("result", result.text)
-                    return result.text
+                    return result.text  # AgentWorker.finished_ok shows this once
 
                 response_parts.append(types.Part.from_function_response(
                     name=name, response={"result": result.text}))
@@ -90,5 +91,4 @@ class GeminiAgent:
 
             contents.append(types.Content(role="user", parts=response_parts))
 
-        emit("error", "Reached the step limit before finishing.")
-        return "Reached the maximum number of steps before completing the task."
+        raise RuntimeError("Reached the maximum number of steps before completing the task.")

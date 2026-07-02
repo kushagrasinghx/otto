@@ -43,23 +43,20 @@ SPOTLIGHT_QSS = """
 }
 """
 
-# --- Step cards (one container per step) ----------------------------------
+# --- Step cards (toast-style, bottom-right) ---------------------------------
+# The card surface itself (fill + border + rounded corners) is painted
+# manually in StepCard.paintEvent — QSS here only styles the children.
 STEP_QSS = """
-#stepCard {
-    background-color: rgba(24, 24, 27, 240);
-    border: 1px solid rgba(255, 255, 255, 22);
-    border-radius: 12px;
-}
 #stepText {
-    color: #f4f4f5;
+    color: #e4e4e7;
     font-size: 13px;
-    font-family: 'Segoe UI', sans-serif;
+    font-family: 'Segoe UI Variable Text', 'Segoe UI', sans-serif;
     background: transparent;
 }
-#dot { border-radius: 4px; }
-#dot[kind="action"]  { background-color: #3b82f6; }
-#dot[kind="thought"] { background-color: #d4d4d8; }
-#dot[kind="status"]  { background-color: #a1a1aa; }
-#dot[kind="result"]  { background-color: #22c55e; }
-#dot[kind="error"]   { background-color: #ef4444; }
+#iconBadge { border-radius: 7px; }
+#iconBadge[kind="action"]  { background-color: rgba(59, 130, 246, 36); }
+#iconBadge[kind="thought"] { background-color: rgba(212, 212, 216, 22); }
+#iconBadge[kind="status"]  { background-color: rgba(161, 161, 170, 22); }
+#iconBadge[kind="result"]  { background-color: rgba(34, 197, 94, 36); }
+#iconBadge[kind="error"]   { background-color: rgba(239, 68, 68, 36); }
 """
