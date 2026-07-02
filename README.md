@@ -1,4 +1,4 @@
-# Otto 🖱️⌨️
+# Otto - Windows Pilot
 
 A Spotlight-style command box for Windows. Press a hotkey, type what you want in
 plain English, and an AI agent **takes over your mouse, keyboard, and shell** to
