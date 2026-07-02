@@ -71,7 +71,7 @@ to edit by hand). Keys can also be supplied via environment variables
 python run.py
 ```
 
-A tray icon appears. Press **Ctrl+Space** (configurable) to summon the
+A tray icon appears. Press **Ctrl+Alt+Space** (configurable) to summon the
 command box. Type something and hit Enter:
 
 - *"open notepad and write a haiku about the rain"*
