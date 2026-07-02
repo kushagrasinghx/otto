@@ -12,7 +12,7 @@
 ; Output:  Output\Otto-Setup-1.0.exe
 
 #define MyAppName "Otto"
-#define MyAppVersion "1.0"
+#define MyAppVersion "1.1"
 #define MyAppPublisher "Kushagra Singh"
 #define MyAppURL "https://github.com/kushagrasinghx/otto"
 #define MyAppExeName "Otto.exe"
